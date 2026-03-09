@@ -6,6 +6,7 @@
 import os
 import sys
 import json
+import asyncio
 import tempfile
 import subprocess
 
@@ -16,7 +17,12 @@ from fastmcp.server.elicitation import AcceptedElicitation, DeclinedElicitation,
 from pydantic import Field, create_model
 
 # The log_level is necessary for Cline to work: https://github.com/jlowin/fastmcp/issues/81
-mcp = FastMCP("Interactive Feedback MCP")
+mcp = FastMCP("Interactive Feedback MCP", log_level="ERROR")
+
+# Prevent concurrent elicitation requests from different conversations
+# within the same Cursor window (they share one MCP server process via stdio).
+# Without this, two simultaneous ctx.elicit() calls cause cross-contamination.
+_feedback_lock = asyncio.Lock()
 
 
 def _build_feedback_model(options: list[str]):
@@ -71,40 +77,50 @@ async def interactive_feedback(
     ctx: Context = None,
 ) -> Dict[str, str]:
     """Request interactive feedback from the user"""
-    predefined_options_list = predefined_options if isinstance(predefined_options, list) else None
 
-    # Build response type for elicitation
-    response_type = None
-    if predefined_options_list and len(predefined_options_list) > 0:
-        options = [str(opt) for opt in predefined_options_list]
-        response_type = _build_feedback_model(options)
+    # Reject concurrent requests: asyncio is single-threaded so locked() + acquire
+    # is atomic (no yield point between check and the sync path of acquire).
+    if _feedback_lock.locked():
+        return {
+            "interactive_feedback": "",
+            "status": "busy",
+            "error": "Another feedback dialog is already active in this window. "
+                     "Please answer that one first, then retry.",
+        }
 
-    try:
-        # Use MCP Elicitation — Cursor renders inline with options + "Other..." input
-        result = await ctx.elicit(
-            message=message,
-            response_type=response_type,
-        )
+    async with _feedback_lock:
+        predefined_options_list = predefined_options if isinstance(predefined_options, list) else None
 
-        if isinstance(result, AcceptedElicitation):
-            feedback = result.data
-            if isinstance(feedback, dict):
-                parts = [str(v) for v in feedback.values() if v]
-                return {"interactive_feedback": "\n".join(parts) if parts else ""}
-            elif isinstance(feedback, list):
-                return {"interactive_feedback": "; ".join(str(f) for f in feedback)}
+        response_type = None
+        if predefined_options_list and len(predefined_options_list) > 0:
+            options = [str(opt) for opt in predefined_options_list]
+            response_type = _build_feedback_model(options)
+
+        try:
+            result = await ctx.elicit(
+                message=message,
+                response_type=response_type,
+            )
+
+            if isinstance(result, AcceptedElicitation):
+                feedback = result.data
+                if isinstance(feedback, dict):
+                    parts = [str(v) for v in feedback.values() if v]
+                    return {"interactive_feedback": "\n".join(parts) if parts else ""}
+                elif isinstance(feedback, list):
+                    return {"interactive_feedback": "; ".join(str(f) for f in feedback)}
+                else:
+                    return {"interactive_feedback": str(feedback) if feedback else ""}
+            elif isinstance(result, DeclinedElicitation):
+                return {"interactive_feedback": "", "status": "declined"}
+            elif isinstance(result, CancelledElicitation):
+                return {"interactive_feedback": "", "status": "cancelled"}
             else:
-                return {"interactive_feedback": str(feedback) if feedback else ""}
-        elif isinstance(result, DeclinedElicitation):
-            return {"interactive_feedback": "", "status": "declined"}
-        elif isinstance(result, CancelledElicitation):
-            return {"interactive_feedback": "", "status": "cancelled"}
-        else:
-            return {"interactive_feedback": str(result)}
+                return {"interactive_feedback": str(result)}
 
-    except Exception:
-        # Fallback to Qt UI if elicitation is not supported
-        return launch_feedback_ui(message, predefined_options_list)
+        except Exception:
+            # Fallback to Qt UI if elicitation is not supported
+            return launch_feedback_ui(message, predefined_options_list)
 
 
 if __name__ == "__main__":
