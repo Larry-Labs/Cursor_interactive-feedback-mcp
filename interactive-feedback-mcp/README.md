@@ -1,51 +1,73 @@
-# 🗣️ Interactive Feedback MCP
+# Interactive Feedback MCP
 
-Simple [MCP Server](https://modelcontextprotocol.io/) to enable a human-in-the-loop workflow in AI-assisted development tools like [Cursor](https://www.cursor.com), [Cline](https://cline.bot) and [Windsurf](https://windsurf.com). This server allows you to easily provide feedback directly to the AI agent, bridging the gap between AI and you.
+A [MCP Server](https://modelcontextprotocol.io/) that enables human-in-the-loop workflow in AI-assisted development tools like [Cursor](https://www.cursor.com). The server uses MCP Elicitation to display feedback forms **inline within the chat interface** — no popup windows needed.
 
- **Note:** This server is designed to run locally alongside the MCP client (e.g., Claude Desktop, VS Code), as it needs direct access to the user's operating system to display notifications.
+一个 [MCP 服务器](https://modelcontextprotocol.io/)，为 [Cursor](https://www.cursor.com) 等 AI 辅助开发工具提供人机交互反馈能力。通过 MCP Elicitation 协议，反馈表单**直接在对话界面内联显示**，无需弹出窗口。
 
-## 🖼️ Example
+## Why Use This? / 为什么使用？
 
-![Interactive Feedback Example](https://raw.githubusercontent.com/poliva/interactive-feedback-mcp/refs/heads/main/.github/example.png)
+In Cursor, every prompt counts against your monthly limit (e.g. 500 premium requests). When iterating on vague instructions, each follow-up clarification triggers a full new request.
 
-## 💡 Why Use This?
+在 Cursor 中，每次发送 prompt 都会消耗月度配额（如 500 次高级请求）。当需求不明确反复沟通时，每次追问都算一次新请求。
 
-In environments like Cursor, every prompt you send to the LLM is treated as a distinct request — and each one counts against your monthly limit (e.g. 500 premium requests). This becomes inefficient when you're iterating on vague instructions or correcting misunderstood output, as each follow-up clarification triggers a full new request.
+This MCP server lets the model **pause and ask for clarification** before finalizing the response. The model triggers `interactive_feedback` which displays an inline form in the chat. You provide feedback, and the model continues — all within a single request.
 
-This MCP server introduces a workaround: it allows the model to pause and request clarification before finalizing the response. Instead of completing the request, the model triggers a tool call (`interactive_feedback`) that opens an interactive feedback window. You can then provide more detail or ask for changes — and the model continues the session, all within a single request.
+本工具让模型在完成回复前**暂停并请求澄清**。模型调用 `interactive_feedback`，在对话中显示内联表单，你提供反馈后模型继续执行——全程只消耗一次请求。
 
-Under the hood, it's just a clever use of tool calls to defer the completion of the request. Since tool calls don't count as separate premium interactions, you can loop through multiple feedback cycles without consuming additional requests.
+### Use Cases / 使用场景
 
-Essentially, this helps your AI assistant _ask for clarification instead of guessing_, without wasting another request. That means fewer wrong answers, better performance, and less wasted API usage.
+- **Clarify before acting / 行动前澄清** — Model asks for details when requirements are ambiguous, instead of guessing.
+  模型在需求模糊时主动提问，而不是猜测。
 
-- **💰 Reduced Premium API Calls:** Avoid wasting expensive API calls generating code based on guesswork.
-- **✅ Fewer Errors:** Clarification \_before\_ action means less incorrect code and wasted time.
-- **⏱️ Faster Cycles:** Quick confirmations beat debugging wrong guesses.
-- **🎮 Better Collaboration:** Turns one-way instructions into a dialogue, keeping you in control.
+- **Confirm before modifying / 修改前确认** — Model presents its plan and waits for approval before changing code.
+  模型展示方案并等待批准后再修改代码。
 
-## 🛠️ Tools
+- **Multi-option decision / 多选项决策** — Model offers predefined options for quick choices (e.g. which approach to use).
+  模型提供预定义选项便于快速决策（如选择实现方案）。
 
-This server exposes the following tool via the Model Context Protocol (MCP):
+- **Post-task feedback / 任务完成后反馈** — Model checks if you need anything else before ending the session.
+  模型在结束前确认是否还有其他需要。
 
-- `interactive_feedback`: Asks the user a question and returns their answer. Can display predefined options.
+### Benefits / 优势
 
-## 📦 Installation
+- **Fewer wasted requests / 减少请求浪费** — Multiple feedback rounds in a single request.
+  一次请求内完成多轮反馈。
 
-1.  **Prerequisites:**
-    *   Python 3.11 or newer.
-    *   [uv](https://github.com/astral-sh/uv) (Python package manager). Install it with:
-        *   Windows: `pip install uv`
-        *   Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-        *   macOS: `brew install uv`
-2.  **Get the code:**
-    *   Clone this repository:
-        `git clone https://github.com/pauoliva/interactive-feedback-mcp.git`
-    *   Or download the source code.
+- **Fewer errors / 减少错误** — Clarification before action means less incorrect code.
+  先澄清再执行，减少错误代码。
 
-## ⚙️ Configuration
+- **Faster iterations / 更快迭代** — Quick confirmations beat debugging wrong guesses.
+  快速确认优于调试错误猜测。
 
-1. Add the following configuration to your `claude_desktop_config.json` (Claude Desktop) or `mcp.json` (Cursor):
-**Remember to change the `/path/to/interactive-feedback-mcp` path to the actual path where you cloned the repository on your system.**
+- **Better collaboration / 更好协作** — Turns one-way instructions into a dialogue.
+  将单向指令变为双向对话。
+
+## Tool / 工具
+
+This server exposes one tool via MCP:
+
+- `interactive_feedback` — Asks the user a question inline in the chat. Supports predefined options for quick selection and free-text input.
+
+## Installation / 安装
+
+### Prerequisites / 前置条件
+
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+  - macOS: `brew install uv`
+  - Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+  - Windows: `pip install uv`
+
+### Setup / 配置
+
+1. Clone the repository / 克隆仓库:
+
+```bash
+git clone https://github.com/pauoliva/interactive-feedback-mcp.git
+```
+
+2. Add to your Cursor MCP config (`mcp.json`), update the path accordingly / 添加到 Cursor MCP 配置，修改路径:
+
 ```json
 {
   "mcpServers": {
@@ -65,16 +87,13 @@ This server exposes the following tool via the Model Context Protocol (MCP):
   }
 }
 ```
-2. Add the following to the custom rules in your AI assistant (in Cursor Settings > Rules > User Rules):
 
-> If requirements or instructions are unclear use the tool interactive_feedback to ask clarifying questions to the user before proceeding, do not make assumptions. Whenever possible, present the user with predefined options through the interactive_feedback MCP tool to facilitate quick decisions.
+3. Add to your Cursor Rules (Settings > Rules > User Rules) / 添加到 Cursor 规则:
 
-> Whenever you're about to complete a user request, call the interactive_feedback tool to request user feedback before ending the process. If the feedback is empty you can end the request and don't call the tool in loop.
+> If requirements or instructions are unclear, use the interactive_feedback tool to ask clarifying questions before proceeding. Present predefined options when possible for quick decisions. After completing a task, call interactive_feedback to check if the user needs anything else. If feedback is empty, end the request without looping.
 
-This will ensure your AI assistant always uses this MCP server to request user feedback when the prompt is unclear and before marking the task as completed.
+## Acknowledgements / 致谢
 
-## 🙏 Acknowledgements
+Based on [interactive-feedback-mcp](https://github.com/poliva/interactive-feedback-mcp) by Fábio Ferreira ([@fabiomlferreira](https://x.com/fabiomlferreira)), enhanced by Pau Oliva ([@pof](https://x.com/pof)) with ideas from Tommy Tong's [interactive-mcp](https://github.com/ttommyth/interactive-mcp).
 
-Developed by Fábio Ferreira ([@fabiomlferreira](https://x.com/fabiomlferreira)).
-
-Enhanced by Pau Oliva ([@pof](https://x.com/pof)) with ideas from Tommy Tong's [interactive-mcp](https://github.com/ttommyth/interactive-mcp).
+Modified to use MCP Elicitation for inline display in Cursor chat.
