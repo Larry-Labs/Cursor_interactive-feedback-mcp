@@ -19,6 +19,7 @@ logger = logging.getLogger("interactive_feedback")
 
 MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 1.0
+HEARTBEAT_INTERVAL_SECONDS = 30
 
 def _build_feedback_model(options: list[str]):
     """Dynamically build a Pydantic model with enum options + free text input.
@@ -30,6 +31,25 @@ def _build_feedback_model(options: list[str]):
         answer=(OptionsLiteral, Field(description="Select an option")),
         other=(str, Field(default="", description="Or type your own response here")),
     )
+
+
+async def _elicit_with_heartbeat(ctx: Context, message: str, response_type):
+    """Run ctx.elicit() while sending periodic heartbeats to prevent MCP timeout."""
+    elicit_task = asyncio.create_task(
+        ctx.elicit(message=message, response_type=response_type)
+    )
+
+    while not elicit_task.done():
+        try:
+            await ctx.report_progress(progress=0, total=1, message="waiting")
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(asyncio.shield(elicit_task), timeout=HEARTBEAT_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            continue
+
+    return elicit_task.result()
 
 
 @mcp.tool()
@@ -50,10 +70,7 @@ async def interactive_feedback(
     last_error = None
     for attempt in range(MAX_RETRIES + 1):
         try:
-            result = await ctx.elicit(
-                message=message,
-                response_type=response_type,
-            )
+            result = await _elicit_with_heartbeat(ctx, message, response_type)
 
             if isinstance(result, AcceptedElicitation):
                 feedback = result.data
