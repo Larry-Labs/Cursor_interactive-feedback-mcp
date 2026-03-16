@@ -48,6 +48,30 @@ This server exposes one tool via MCP:
 
 - `interactive_feedback` — Asks the user a question inline in the chat. Supports predefined options for quick selection and free-text input.
 
+### Parameters / 参数
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | `str` | Yes | The question to display to the user / 向用户展示的问题 |
+| `predefined_options` | `list` | No | Predefined options for quick selection / 预定义选项供快速选择 |
+
+### Features / 特性
+
+- **Concurrent-safe / 并发安全** — Each tool call runs independently with its own Context. No global state or preemptive cancellation. Multiple conversations can call `interactive_feedback` simultaneously without interfering.
+  每次调用独立运行，拥有独立 Context，无全局状态或抢占取消。多个对话可同时调用而互不干扰。
+
+- **Timeout / 超时** — Each feedback request has a 1800-second (30 min) timeout. If the user doesn't respond, the tool returns a timeout status.
+  每次反馈请求有 1800 秒（30 分钟）超时。用户未响应时返回超时状态。
+
+- **Qt UI Fallback / Qt 弹窗降级** — If MCP Elicitation is unavailable (e.g. the client doesn't support it), the tool automatically falls back to a standalone Qt feedback window.
+  当 MCP Elicitation 不可用时（如客户端不支持），自动降级为独立 Qt 弹窗。
+
+- **Response States / 响应状态** — Handles three elicitation outcomes:
+  处理三种 elicitation 结果：
+  - `AcceptedElicitation` — User submitted feedback / 用户提交了反馈
+  - `DeclinedElicitation` — User declined to respond / 用户拒绝响应
+  - `CancelledElicitation` — User cancelled the dialog / 用户取消了对话
+
 ## Installation / 安装
 
 ### Prerequisites / 前置条件
