@@ -19,6 +19,32 @@ from pydantic import Field, create_model
 
 mcp = FastMCP("Interactive Feedback MCP", log_level="ERROR")
 
+HEARTBEAT_INTERVAL = 30
+
+
+async def _elicit_with_heartbeat(ctx: Context, message: str, response_type, timeout: float = 1800.0):
+    """Run ctx.elicit() while sending periodic heartbeats to prevent MCP/Cursor transport timeout."""
+    elicit_task = asyncio.create_task(
+        ctx.elicit(message=message, response_type=response_type)
+    )
+
+    elapsed = 0.0
+    while not elicit_task.done():
+        try:
+            await ctx.report_progress(progress=0, total=1, message="waiting")
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(asyncio.shield(elicit_task), timeout=HEARTBEAT_INTERVAL)
+        except asyncio.TimeoutError:
+            elapsed += HEARTBEAT_INTERVAL
+            if elapsed >= timeout:
+                elicit_task.cancel()
+                raise asyncio.TimeoutError()
+            continue
+
+    return elicit_task.result()
+
 
 def _build_feedback_model(options: list[str]):
     """Dynamically build a Pydantic model with enum options + free text input."""
@@ -82,10 +108,7 @@ async def interactive_feedback(
         response_type = _build_feedback_model(options)
 
     try:
-        result = await asyncio.wait_for(
-            ctx.elicit(message=message, response_type=response_type),
-            timeout=1800.0,
-        )
+        result = await _elicit_with_heartbeat(ctx, message, response_type)
 
         if isinstance(result, AcceptedElicitation):
             feedback = result.data
