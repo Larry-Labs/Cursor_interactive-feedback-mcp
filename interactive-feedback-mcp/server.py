@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import asyncio
+import logging
 import tempfile
 import subprocess
 
@@ -18,6 +19,13 @@ from fastmcp.server.elicitation import AcceptedElicitation, DeclinedElicitation,
 from pydantic import Field, create_model
 
 mcp = FastMCP("Interactive Feedback MCP", log_level="ERROR")
+
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedback-debug.log")
+logger = logging.getLogger("interactive_feedback")
+logger.setLevel(logging.DEBUG)
+_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+_fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+logger.addHandler(_fh)
 
 HEARTBEAT_INTERVAL = 30
 
@@ -101,6 +109,7 @@ async def interactive_feedback(
     conversations can invoke this tool concurrently without interference.
     """
     predefined_options_list = predefined_options if isinstance(predefined_options, list) else None
+    logger.info("interactive_feedback called: message=%r, options=%r", message, predefined_options_list)
 
     response_type = None
     if predefined_options_list and len(predefined_options_list) > 0:
@@ -109,6 +118,7 @@ async def interactive_feedback(
 
     try:
         result = await _elicit_with_heartbeat(ctx, message, response_type)
+        logger.info("elicit result type=%s, value=%r", type(result).__name__, result)
 
         if isinstance(result, AcceptedElicitation):
             feedback = result.data
@@ -120,16 +130,21 @@ async def interactive_feedback(
             else:
                 return {"interactive_feedback": str(feedback) if feedback else ""}
         elif isinstance(result, DeclinedElicitation):
+            logger.warning("User declined elicitation")
             return {"interactive_feedback": "", "status": "declined"}
         elif isinstance(result, CancelledElicitation):
+            logger.warning("Elicitation cancelled (dialog dismissed)")
             return {"interactive_feedback": "", "status": "cancelled"}
         else:
+            logger.warning("Unexpected result type: %s", type(result).__name__)
             return {"interactive_feedback": str(result)}
 
     except asyncio.TimeoutError:
+        logger.error("Elicitation timed out (1800s)")
         return {"interactive_feedback": "", "status": "timeout",
                 "error": "Feedback dialog timed out (1800s)."}
-    except Exception:
+    except Exception as e:
+        logger.error("Elicitation exception: %s, falling back to Qt UI", e, exc_info=True)
         return _launch_feedback_ui(message, predefined_options_list)
 
 
