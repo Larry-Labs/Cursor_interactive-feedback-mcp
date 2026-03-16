@@ -60,8 +60,8 @@ This server exposes one tool via MCP:
 - **Concurrent-safe / 并发安全** — Each tool call runs independently with its own Context. No global state or preemptive cancellation. Multiple conversations can call `interactive_feedback` simultaneously without interfering.
   每次调用独立运行，拥有独立 Context，无全局状态或抢占取消。多个对话可同时调用而互不干扰。
 
-- **Timeout / 超时** — Each feedback request has a 1800-second (30 min) timeout. If the user doesn't respond, the tool returns a timeout status.
-  每次反馈请求有 1800 秒（30 分钟）超时。用户未响应时返回超时状态。
+- **No timeout / 无超时** — Waits indefinitely for user response. Heartbeats keep the connection alive so the dialog stays open regardless of how long the user takes.
+  无限等待用户响应。心跳机制保持连接存活，无论用户花多长时间对话框都不会消失。
 
 - **Qt UI Fallback / Qt 弹窗降级** — If MCP Elicitation is unavailable (e.g. the client doesn't support it), the tool automatically falls back to a standalone Qt feedback window.
   当 MCP Elicitation 不可用时（如客户端不支持），自动降级为独立 Qt 弹窗。

@@ -30,13 +30,16 @@ logger.addHandler(_fh)
 HEARTBEAT_INTERVAL = 30
 
 
-async def _elicit_with_heartbeat(ctx: Context, message: str, response_type, timeout: float = 1800.0):
-    """Run ctx.elicit() while sending periodic heartbeats to prevent MCP/Cursor transport timeout."""
+async def _elicit_with_heartbeat(ctx: Context, message: str, response_type):
+    """Run ctx.elicit() while sending periodic heartbeats to prevent MCP/Cursor transport timeout.
+
+    No application-level timeout — waits indefinitely for user response.
+    Heartbeats keep the MCP transport alive so Cursor doesn't drop the connection.
+    """
     elicit_task = asyncio.create_task(
         ctx.elicit(message=message, response_type=response_type)
     )
 
-    elapsed = 0.0
     while not elicit_task.done():
         try:
             await ctx.report_progress(progress=0, total=1, message="waiting")
@@ -45,10 +48,6 @@ async def _elicit_with_heartbeat(ctx: Context, message: str, response_type, time
         try:
             await asyncio.wait_for(asyncio.shield(elicit_task), timeout=HEARTBEAT_INTERVAL)
         except asyncio.TimeoutError:
-            elapsed += HEARTBEAT_INTERVAL
-            if elapsed >= timeout:
-                elicit_task.cancel()
-                raise asyncio.TimeoutError()
             continue
 
     return elicit_task.result()
@@ -139,10 +138,6 @@ async def interactive_feedback(
             logger.warning("Unexpected result type: %s", type(result).__name__)
             return {"interactive_feedback": str(result)}
 
-    except asyncio.TimeoutError:
-        logger.error("Elicitation timed out (1800s)")
-        return {"interactive_feedback": "", "status": "timeout",
-                "error": "Feedback dialog timed out (1800s)."}
     except Exception as e:
         logger.error("Elicitation exception: %s, falling back to Qt UI", e, exc_info=True)
         return _launch_feedback_ui(message, predefined_options_list)
