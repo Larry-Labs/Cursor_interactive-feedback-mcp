@@ -36,21 +36,29 @@ async def _elicit_with_heartbeat(ctx: Context, message: str, response_type):
     No application-level timeout — waits indefinitely for user response.
     Heartbeats keep the MCP transport alive so Cursor doesn't drop the connection.
     """
+    logger.debug("_elicit_with_heartbeat: creating elicit task, response_type=%s", response_type)
     elicit_task = asyncio.create_task(
         ctx.elicit(message=message, response_type=response_type)
     )
 
+    heartbeat_count = 0
     while not elicit_task.done():
+        heartbeat_count += 1
         try:
             await ctx.report_progress(progress=0, total=1, message="waiting")
-        except Exception:
-            pass
+        except Exception as hb_err:
+            logger.warning("heartbeat #%d failed: %s", heartbeat_count, hb_err)
         try:
             await asyncio.wait_for(asyncio.shield(elicit_task), timeout=HEARTBEAT_INTERVAL)
+            logger.debug("elicit task completed after %d heartbeats (~%ds)", heartbeat_count, heartbeat_count * HEARTBEAT_INTERVAL)
         except asyncio.TimeoutError:
+            if heartbeat_count % 20 == 0:
+                logger.debug("still waiting: %d heartbeats sent (~%ds elapsed)", heartbeat_count, heartbeat_count * HEARTBEAT_INTERVAL)
             continue
 
-    return elicit_task.result()
+    result = elicit_task.result()
+    logger.debug("_elicit_with_heartbeat returning: type=%s", type(result).__name__)
+    return result
 
 
 def _build_feedback_model(options: list[str]):
@@ -108,12 +116,13 @@ async def interactive_feedback(
     conversations can invoke this tool concurrently without interference.
     """
     predefined_options_list = predefined_options if isinstance(predefined_options, list) else None
-    logger.info("interactive_feedback called: message=%r, options=%r", message, predefined_options_list)
+    logger.info("interactive_feedback called: message=%r, options=%r, has_ctx=%s", message, predefined_options_list, ctx is not None)
 
     response_type = None
     if predefined_options_list and len(predefined_options_list) > 0:
         options = [str(opt) for opt in predefined_options_list]
         response_type = _build_feedback_model(options)
+        logger.debug("built response_type with %d options: %s", len(options), options)
 
     try:
         result = await _elicit_with_heartbeat(ctx, message, response_type)
@@ -121,13 +130,16 @@ async def interactive_feedback(
 
         if isinstance(result, AcceptedElicitation):
             feedback = result.data
+            logger.debug("accepted feedback data type=%s, value=%r", type(feedback).__name__, feedback)
             if isinstance(feedback, dict):
                 parts = [str(v) for v in feedback.values() if v]
-                return {"interactive_feedback": "\n".join(parts) if parts else ""}
+                ret = {"interactive_feedback": "\n".join(parts) if parts else ""}
             elif isinstance(feedback, list):
-                return {"interactive_feedback": "; ".join(str(f) for f in feedback)}
+                ret = {"interactive_feedback": "; ".join(str(f) for f in feedback)}
             else:
-                return {"interactive_feedback": str(feedback) if feedback else ""}
+                ret = {"interactive_feedback": str(feedback) if feedback else ""}
+            logger.info("returning accepted: %r", ret)
+            return ret
         elif isinstance(result, DeclinedElicitation):
             logger.warning("User declined elicitation")
             return {"interactive_feedback": "", "status": "declined"}
@@ -135,7 +147,7 @@ async def interactive_feedback(
             logger.warning("Elicitation cancelled (dialog dismissed)")
             return {"interactive_feedback": "", "status": "cancelled"}
         else:
-            logger.warning("Unexpected result type: %s", type(result).__name__)
+            logger.warning("Unexpected result type: %s, repr=%r", type(result).__name__, result)
             return {"interactive_feedback": str(result)}
 
     except Exception as e:
