@@ -8,7 +8,6 @@ import os
 import sys
 import json
 import asyncio
-import logging
 import tempfile
 import subprocess
 
@@ -19,46 +18,6 @@ from fastmcp.server.elicitation import AcceptedElicitation, DeclinedElicitation,
 from pydantic import Field, create_model
 
 mcp = FastMCP("Interactive Feedback MCP", log_level="ERROR")
-
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedback-debug.log")
-logger = logging.getLogger("interactive_feedback")
-logger.setLevel(logging.DEBUG)
-_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
-_fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-logger.addHandler(_fh)
-
-HEARTBEAT_INTERVAL = 30
-
-
-async def _elicit_with_heartbeat(ctx: Context, message: str, response_type):
-    """Run ctx.elicit() while sending periodic heartbeats to prevent MCP/Cursor transport timeout.
-
-    No application-level timeout — waits indefinitely for user response.
-    Heartbeats keep the MCP transport alive so Cursor doesn't drop the connection.
-    """
-    logger.debug("_elicit_with_heartbeat: creating elicit task, response_type=%s", response_type)
-    elicit_task = asyncio.create_task(
-        ctx.elicit(message=message, response_type=response_type)
-    )
-
-    heartbeat_count = 0
-    while not elicit_task.done():
-        heartbeat_count += 1
-        try:
-            await ctx.report_progress(progress=0, total=1, message="waiting")
-        except Exception as hb_err:
-            logger.warning("heartbeat #%d failed: %s", heartbeat_count, hb_err)
-        try:
-            await asyncio.wait_for(asyncio.shield(elicit_task), timeout=HEARTBEAT_INTERVAL)
-            logger.debug("elicit task completed after %d heartbeats (~%ds)", heartbeat_count, heartbeat_count * HEARTBEAT_INTERVAL)
-        except asyncio.TimeoutError:
-            if heartbeat_count % 20 == 0:
-                logger.debug("still waiting: %d heartbeats sent (~%ds elapsed)", heartbeat_count, heartbeat_count * HEARTBEAT_INTERVAL)
-            continue
-
-    result = elicit_task.result()
-    logger.debug("_elicit_with_heartbeat returning: type=%s", type(result).__name__)
-    return result
 
 
 def _build_feedback_model(options: list[str]):
@@ -116,43 +75,54 @@ async def interactive_feedback(
     conversations can invoke this tool concurrently without interference.
     """
     predefined_options_list = predefined_options if isinstance(predefined_options, list) else None
-    logger.info("interactive_feedback called: message=%r, options=%r, has_ctx=%s", message, predefined_options_list, ctx is not None)
 
     response_type = None
     if predefined_options_list and len(predefined_options_list) > 0:
         options = [str(opt) for opt in predefined_options_list]
         response_type = _build_feedback_model(options)
-        logger.debug("built response_type with %d options: %s", len(options), options)
+
+    max_retries = 3
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            result = await asyncio.wait_for(
+                ctx.elicit(message=message, response_type=response_type),
+                timeout=1800.0,
+            )
+
+            if isinstance(result, AcceptedElicitation):
+                feedback = result.data
+                if isinstance(feedback, dict):
+                    parts = [str(v) for v in feedback.values() if v]
+                    return {"interactive_feedback": "\n".join(parts) if parts else ""}
+                elif isinstance(feedback, list):
+                    return {"interactive_feedback": "; ".join(str(f) for f in feedback)}
+                else:
+                    return {"interactive_feedback": str(feedback) if feedback else ""}
+            elif isinstance(result, DeclinedElicitation):
+                return {"interactive_feedback": "", "status": "declined"}
+            elif isinstance(result, CancelledElicitation):
+                return {"interactive_feedback": "", "status": "cancelled"}
+            else:
+                return {"interactive_feedback": str(result)}
+
+        except asyncio.TimeoutError:
+            return {"interactive_feedback": "", "status": "timeout",
+                    "error": "Feedback dialog timed out (1800s)."}
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)
+                continue
 
     try:
-        result = await _elicit_with_heartbeat(ctx, message, response_type)
-        logger.info("elicit result type=%s, value=%r", type(result).__name__, result)
-
-        if isinstance(result, AcceptedElicitation):
-            feedback = result.data
-            logger.debug("accepted feedback data type=%s, value=%r", type(feedback).__name__, feedback)
-            if isinstance(feedback, dict):
-                parts = [str(v) for v in feedback.values() if v]
-                ret = {"interactive_feedback": "\n".join(parts) if parts else ""}
-            elif isinstance(feedback, list):
-                ret = {"interactive_feedback": "; ".join(str(f) for f in feedback)}
-            else:
-                ret = {"interactive_feedback": str(feedback) if feedback else ""}
-            logger.info("returning accepted: %r", ret)
-            return ret
-        elif isinstance(result, DeclinedElicitation):
-            logger.warning("User declined elicitation")
-            return {"interactive_feedback": "", "status": "declined"}
-        elif isinstance(result, CancelledElicitation):
-            logger.warning("Elicitation cancelled (dialog dismissed)")
-            return {"interactive_feedback": "", "status": "cancelled"}
-        else:
-            logger.warning("Unexpected result type: %s, repr=%r", type(result).__name__, result)
-            return {"interactive_feedback": str(result)}
-
-    except Exception as e:
-        logger.error("Elicitation exception: %s, falling back to Qt UI", e, exc_info=True)
         return _launch_feedback_ui(message, predefined_options_list)
+    except Exception:
+        raise Exception(
+            f"Elicitation failed after {max_retries} retries "
+            f"(last error: {last_error}), and Qt fallback is unavailable."
+        )
 
 
 if __name__ == "__main__":
